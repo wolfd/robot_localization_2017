@@ -1,5 +1,5 @@
 free_thresh: 0.196
-image: newbot_unrotated.pgm
+image: ac109_1.pgm
 negate: 0
 occupied_thresh: 0.65
 origin: [-12.883875762271897, -4.716959961924749, 0.0]

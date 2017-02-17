@@ -5,7 +5,7 @@
 import rospy
 
 from std_msgs.msg import Header, String
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, PointCloud
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, PoseArray, Pose, Point, Quaternion
 from nav_msgs.srv import GetMap
 from copy import deepcopy
@@ -99,18 +99,26 @@ class ParticleFilter:
         # Setup pubs and subs
 
         # pose_listener responds to selection of a new approximate robot location (for instance using rviz)
-        self.pose_listener = rospy.Subscriber("initialpose", PoseWithCovarianceStamped, self.update_initial_pose)
+        rospy.Subscriber("initialpose", PoseWithCovarianceStamped, self.update_initial_pose)
+
         # publish the current particle cloud.  This enables viewing particles in rviz.
         self.particle_pub = rospy.Publisher("particlecloud", PoseArray, queue_size=10)
 
         # laser_subscriber listens for data from the lidar
-        self.laser_subscriber = rospy.Subscriber(self.scan_topic, LaserScan, self.scan_received)
+        rospy.Subscriber(self.scan_topic, LaserScan, self.scan_received)
 
         # enable listening for and broadcasting coordinate transforms
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
 
         self.particle_cloud = []
+
+        # change use_projected_stable_scan to True to use point clouds instead of laser scans
+        self.use_projected_stable_scan = False
+        self.last_projected_stable_scan = None
+        if self.use_projected_stable_scan:
+            # subscriber to the odom point cloud
+            rospy.Subscriber("projected_stable_scan", PointCloud, self.projected_scan_received)
 
         self.current_odom_xy_theta = []
 
@@ -134,6 +142,9 @@ class ParticleFilter:
         # TODO: assign the lastest pose into self.robot_pose as a geometry_msgs.Pose object
         # just to get started we will fix the robot's pose to always be at the origin
         self.robot_pose = Pose()
+
+    def projected_scan_received(self, msg):
+        self.last_projected_stable_scan = msg
 
     def update_particles_with_odom(self, msg):
         """ Update the particles using the newly given odometry pose.
@@ -269,7 +280,6 @@ class ParticleFilter:
         self.odom_pose = self.tf_listener.transformPose(self.odom_frame, p)
         # store the the odometry pose in a more convenient format (x,y,theta)
         new_odom_xy_theta = convert_pose_to_xy_and_theta(self.odom_pose.pose)
-
         if not(self.particle_cloud):
             # now that we have all of the necessary transforms we can update the particle cloud
             self.initialize_particle_cloud()
@@ -282,6 +292,11 @@ class ParticleFilter:
               math.fabs(new_odom_xy_theta[2] - self.current_odom_xy_theta[2]) > self.a_thresh):
             # we have moved far enough to do an update!
             self.update_particles_with_odom(msg)    # update based on odometry
+            if self.last_projected_stable_scan:
+                last_projected_scan_timeshift = deepcopy(self.last_projected_stable_scan)
+                last_projected_scan_timeshift.header.stamp = msg.header.stamp
+                self.scan_in_base_link = self.tf_listener.transformPointCloud("base_link", last_projected_scan_timeshift)
+
             self.update_particles_with_laser(msg)   # update based on laser scan
             self.update_robot_pose()                # update robot's pose
             self.resample_particles()               # resample particles to focus on areas of high density

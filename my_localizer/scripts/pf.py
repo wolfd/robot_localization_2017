@@ -180,16 +180,6 @@ class ParticleFilter:
         pass
 
     @staticmethod
-    def weighted_values(values, probabilities, size):
-        """ Return a random sample of size elements from the set values with the specified probabilities
-            values: the values to sample from (numpy.ndarray)
-            probabilities: the probability of selecting each element in values (numpy.ndarray)
-            size: the number of samples
-        """
-        bins = np.add.accumulate(probabilities)
-        return values[np.digitize(random_sample(size), bins)]
-
-    @staticmethod
     def draw_random_sample(choices, probabilities, n):
         """ Return a random sample of n elements from the set choices with the specified probabilities
             choices: the values to sample from represented as a list

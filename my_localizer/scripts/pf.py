@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-""" This is the starter code for the robot localization project """
+"""Danny and Arpan's Robot Localization Project"""
 
 from __future__ import division
 
@@ -25,6 +25,7 @@ import numpy as np
 from numpy.random import random_sample
 from sklearn.neighbors import NearestNeighbors
 from occupancy_field import OccupancyField
+from scipy import stats
 
 from helper_functions import (convert_pose_inverse_transform,
                               convert_translation_rotation_to_pose,
@@ -111,6 +112,10 @@ class ParticleFilter:
         # enable listening for and broadcasting coordinate transforms
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
+
+        self.particle_number = 1000
+        self.xyscale = 2
+        self.thetascale = 
 
         self.particle_cloud = []
 
@@ -229,9 +234,23 @@ class ParticleFilter:
             xy_theta = convert_pose_to_xy_and_theta(self.odom_pose.pose)
         self.particle_cloud = []
         # TODO create particles
+        #Create arrays of particle X, Y, Thetas based on normal distribution
+        x  = scipy.stats.norm.rvs(loc = xy_theta(0),size = self.particle_number,scale = self.xyscale)
+        y  = scipy.stats.norm.rvs(loc = xy_theta(1),size = self.particle_number,scale = self.xyscale)
+        theta  = scipy.stats.norm.rvs(loc = xy_theta(2),size = self.particle_number,scale = self.thetascale)    #TODO : Process Theta array to handle wrapping angles
 
-        self.normalize_particles()
-        self.update_robot_pose()
+        #pick random values from distribution of possible values to create normalized particle cloud
+        #picking random values decouples x,y,and theta
+        #weights all equal and sum to one
+        for i in range(self.particle_number):
+            particlex = random.choice(x)
+            particley = random.choice(y)
+            particletheta = random.choice(theta)
+            particle = Particle(particlex,particley,particletheta,1.0/self.particle_number)
+            self.particle_cloud.append(particle)
+
+
+       
 
     def normalize_particles(self):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """

@@ -30,6 +30,14 @@ from helper_functions import (convert_pose_inverse_transform,
                               convert_translation_rotation_to_pose,
                               convert_pose_to_xy_and_theta,
                               angle_diff)
+        
+class ParticleCloud(object):
+    """"""
+    def __init__(self, particle_cloud_matrix):
+        super(ParticleCloud, self).__init__()
+        self.particle_cloud_matrix = particle_cloud_matrix
+    
+    def 
 
 class Particle(object):
     """ Represents a hypothesis (particle) of the robot's pose consisting of x,y and theta (yaw)
@@ -149,6 +157,8 @@ class ParticleFilter:
 
         # TODO: assign the lastest pose into self.robot_pose as a geometry_msgs.Pose object
         # just to get started we will fix the robot's pose to always be at the origin
+        max_weight_index = np.argmax(self.particle_cloud[:,0])
+
         self.robot_pose = Pose()
 
     def projected_scan_received(self, msg):
@@ -231,20 +241,38 @@ class ParticleFilter:
         self.particle_cloud = []
         # TODO create particles
 
+        num_points = 300
+        xy_spread = 10.0
+        theta_spread = 2 * math.pi
+
+        random_points = np.random.normal(
+            loc=xy_theta,
+            scale=[xy_spread, xy_spread, theta_spread],
+            size=(3, num_points)
+        )
+
+        initial_weights = np.ones((num_points,1)) # generate column of ones
+
+        # concat weights with generated points
+        self.particle_cloud = np.concatenate((initial_weights, random_points), axis=1)
+
+        # initialize cloud with equal weights
+        # self.particle_cloud = [Particle(1.0, *values) for values in random_points]
+
         self.normalize_particles()
         self.update_robot_pose()
 
     def normalize_particles(self):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
+        weight_sum = np.sum(self.particle_cloud[:,0]) # grab the weights
 
-        weight_sum = sum([p.w for p in self.particle_cloud])
-
-        for p in self.particle_cloud:
-        	p.w = p.w / weight_sum
+        normalized_weight_column = self.particle_cloud[:,0] / weight_sum
+        # concatenate normalized weights with the rest of the array
+        self.particle_cloud = np.concatenate((normalized_weight_column, self.particle_cloud[:,1:]))
 
     def publish_particles(self, msg):
         particles_conv = []
-        for p in self.particle_cloud:
+        for p in as_particles(self.particle_cloud):
             particles_conv.append(p.as_pose())
         # actually send the message so that we can view it in rviz
         self.particle_pub.publish(PoseArray(header=Header(stamp=rospy.Time.now(),

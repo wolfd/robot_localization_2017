@@ -523,7 +523,7 @@ class ParticleFilter:
         """ Make sure that we are always broadcasting the last map
             to odom transformation.  This is necessary so things like
             move_base can work properly. """
-        if not hasattr(self, 'translation') and hasattr(self, 'rotation'):
+        if not (hasattr(self, 'translation') and hasattr(self, 'rotation')):
             return
 
         self.tf_broadcaster.sendTransform(

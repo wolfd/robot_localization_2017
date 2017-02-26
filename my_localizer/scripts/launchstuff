@@ -1,3 +1,6 @@
+
+#Things for Arpan to paste into the terminal to launch.
+
 roslaunch my_localizer test.launch map_file:=/home/arpan/catkin_ws/src/robot_localization_2017/my_localizer/maps/ac109_1.yaml
 
 

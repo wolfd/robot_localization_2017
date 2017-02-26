@@ -1,0 +1,6 @@
+free_thresh: 0.196
+image: ac109_4.pgm
+negate: 0
+occupied_thresh: 0.65
+origin: [-14.33685853227317, -3.605621629538714, 0.0]
+resolution: 0.02

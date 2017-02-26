@@ -281,7 +281,7 @@ class ParticleFilter:
             old_odom_xy_theta = self.current_odom_xy_theta
             delta = np.array([new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
                      new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
-                     new_odom_xy_theta[2] - self.current_odom_xy_theta[2]])
+                     angle_diff(new_odom_xy_theta[2] - self.current_odom_xy_theta[2])])
 
             self.current_odom_xy_theta = new_odom_xy_theta
         else:

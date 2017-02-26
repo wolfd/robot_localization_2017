@@ -46,7 +46,7 @@ class OccupancyField(object):
             for j in range(self.map.info.height):
                 # occupancy grids are stored in row major order, if you go
                 # through this right, you might be able to use curr
-                ind = i + j*self.map.info.width
+                ind = i + j * self.map.info.width
                 if self.map.data[ind] > 0:
                     total_occupied += 1
                 X[curr, 0] = float(i)

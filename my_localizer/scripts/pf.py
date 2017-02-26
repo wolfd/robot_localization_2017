@@ -174,11 +174,12 @@ class ParticleFilter:
         # maximum penalty to assess in the likelihood field model
         self.laser_max_distance = 2.0
 
-        # TODO: define additional constants if needed
-
-                
+        #spreads for init       
         self.xy_spread = 10.0
         self.theta_spread = 2 * math.pi
+        #odom update error
+        self.xy_odomspread = 0.01
+        self.thetaodom_spread = 0.01 * math.pi
 
         # Setup pubs and subs
 
@@ -267,10 +268,10 @@ class ParticleFilter:
 
     def update_particles_with_odom(self, msg):
         """ Update the particles using the newly given odometry pose.
-            The function computes the value delta which is a tuple (x,y,theta)
+            The function computes the value delta which is a numpy array (x,y,theta,0 (for weight))
             that indicates the change in position and angle between the
             odometry when the particles were last updated and the current
-            odometry.
+            odometry. It then adds that delta to every element in the particle cloud and normalizes the angles.
 
             msg: this is not really needed to implement this, but is here just
             in case.
@@ -281,18 +282,42 @@ class ParticleFilter:
             old_odom_xy_theta = self.current_odom_xy_theta
             delta = np.array([new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
                      new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
-                     angle_diff(new_odom_xy_theta[2] - self.current_odom_xy_theta[2])])
+                     angle_diff(new_odom_xy_theta[2],self.current_odom_xy_theta[2]),0])
 
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
+        #random_deltaerror based on odomspread constants and delta
+        random_deltaerror = np.random.normal(
+            loc=[0,0,0],
+            scale=[delta[0]*self.xy_odomspread, delta[1]*self.xy_odomspread, delta[2]*self.thetaodom_spread],
+            size=(self.n_particles, 3)
+        )
+
+        # add zero to the weights 
+        zero_weights = np.zeros((self.n_particles, 1))  # generate column of ones
+
+        # concat weights with generated points
+        self.particle_cloud = np.concatenate(
+            (zero_weights, random_deltaerror),
+            axis=1
+        )
+
+
+        #add delta to every element of random deltaerror
+        random_delta = np.add(random_deltaerror,delta)
+
+        #add randomized delta to particle cloud
+        self.particle_cloud = np.add(random_delta,self.particle_cloud)
+
+        #normalize angles
+
+        self.particle_cloud[0:2] = helper_functions.angle_normalize(self.particle_cloud[:,2])
 
 
 
-        # TODO: modify particles using delta
-        # For added difficulty: Implement sample_motion_odometry
-        # (Prob Rob p 136)
+
 
     def map_calc_range(self, x, y, theta):
         """ Difficulty Level 3: implement a ray tracing likelihood model...

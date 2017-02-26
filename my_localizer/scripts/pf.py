@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-""" This is the starter code for the robot localization project """
+"""Danny and Arpan's Robot Localization Project"""
 
 from __future__ import division
 
@@ -25,6 +25,7 @@ import numpy as np
 from numpy.random import random_sample
 from sklearn.neighbors import NearestNeighbors
 from occupancy_field import OccupancyField
+from scipy import stats
 
 from helper_functions import (convert_pose_inverse_transform,
                               convert_translation_rotation_to_pose,
@@ -199,6 +200,7 @@ class ParticleFilter:
         # enable listening for and broadcasting coordinate transforms
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
+
 
         self.particle_cloud = None
 

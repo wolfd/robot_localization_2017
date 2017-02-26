@@ -339,7 +339,7 @@ class ParticleFilter:
         self.particle_cloud = np.add(random_delta, self.particle_cloud)
 
         # normalize angles
-        self.particle_cloud[0:2] = angle_normalize(self.particle_cloud[:, 2])
+        self.particle_cloud[:, 3] = angle_normalize(self.particle_cloud[:, 3])
 
     def map_calc_range(self, x, y, theta):
         """ Difficulty Level 3: implement a ray tracing likelihood model...

@@ -280,9 +280,9 @@ class ParticleFilter:
         # compute the change in x,y,theta since our last update
         if self.current_odom_xy_theta:
             old_odom_xy_theta = self.current_odom_xy_theta
-            delta = np.array([new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
-                     new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
-                     angle_diff(new_odom_xy_theta[2],self.current_odom_xy_theta[2]),0])
+            delta = np.array([self.current_odom_xy_theta[0] - new_odom_xy_theta[0],
+                     self.current_odom_xy_theta[1] - new_odom_xy_theta[1],
+                     angle_diff(new_odom_xy_theta[2],self.current_odom_xy_theta[2])])
 
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
@@ -291,29 +291,30 @@ class ParticleFilter:
         #random_deltaerror based on odomspread constants and delta
         random_deltaerror = np.random.normal(
             loc=[0,0,0],
-            scale=[delta[0]*self.xy_odomspread, delta[1]*self.xy_odomspread, delta[2]*self.thetaodom_spread],
+            scale=[math.fabs(delta[0]*self.xy_odomspread), math.fabs(delta[1]*self.xy_odomspread), math.fabs(delta[2]*self.thetaodom_spread)],
             size=(self.n_particles, 3)
         )
 
         # add zero to the weights 
         zero_weights = np.zeros((self.n_particles, 1))  # generate column of ones
 
-        # concat weights with generated points
-        self.particle_cloud = np.concatenate(
-            (zero_weights, random_deltaerror),
-            axis=1
-        )
-
 
         #add delta to every element of random deltaerror
         random_delta = np.add(random_deltaerror,delta)
+
+
+        # concat weights with generated points
+        random_delta = np.concatenate(
+            (zero_weights, random_delta),
+            axis=1
+        )
 
         #add randomized delta to particle cloud
         self.particle_cloud = np.add(random_delta,self.particle_cloud)
 
         #normalize angles
 
-        self.particle_cloud[0:2] = helper_functions.angle_normalize(self.particle_cloud[:,2])
+        self.particle_cloud[0:2] = angle_normalize(self.particle_cloud[:,2])
 
 
 

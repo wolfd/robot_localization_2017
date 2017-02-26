@@ -365,7 +365,7 @@ class ParticleFilter:
         """
         # create or reuse big rotation matrix to transform laser scan into
         # points around (0, 0)
-
+        start_time = rospy.get_time()
         thetas = np.deg2rad(
             np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
         )
@@ -393,11 +393,13 @@ class ParticleFilter:
             p.w = np.mean(likes)
 
         # filter out all zero values in particle_cloud
-        self.particle_cloud = (
-            self.particle_cloud[0 != self.particle_cloud[:, 0]]
-        )
+        # self.particle_cloud = (
+        #     self.particle_cloud[0 != self.particle_cloud[:, 0]]
+        # )
 
         self.normalize_particles()
+
+        print rospy.get_time() - start_time
 
     @staticmethod
     def draw_random_sample(choices, probabilities, n):

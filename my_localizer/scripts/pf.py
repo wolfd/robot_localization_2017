@@ -74,17 +74,44 @@ class Particle(object):
     #     self.theta = theta
     #     self.x = x
     #     self.y = y
+    name_mapping = dict(w=0, x=1, y=2, theta=3)
 
     def __init__(self, np_particle):
-        self.name_mapping = dict(w=0, x=1, y=2, theta=3)
         self.view = np_particle
 
     def __getattr__(self, name):
-        if name in self.name_mapping:
-            index = self.name_mapping[name]
+        if name in Particle.name_mapping:
+            index = Particle.name_mapping[name]
             return self.view[index]
         else:
-            raise AttributeError
+            raise AttributeError(
+                "%r object has no attribute %r" % (self.__class__, attr)
+            )
+
+    def __setattr__(self, name, value):
+        if name in Particle.name_mapping:
+            index = Particle.name_mapping[name]
+            self.view[index] = value
+        else:
+            object.__setattr__(self, name, value)
+
+    def transform_scan(self, scan_points):
+        """ Transforms a set of laser scan points from the base_link frame into
+            the local to this particle frame.
+
+            scan_points: numpy matrix of n rows, 2 columns (x, y)
+
+            returns an n row, 2 column matrix of transformed points
+        """
+        # translate scan_points
+        scan_points = scan_points + [self.x, self.y]
+
+        # generate rotation matrix
+        c, s = np.cos(self.theta), np.sin(self.theta)
+        rotation_matrix = np.matrix([[c, -s], [s, c]])
+
+        # rotate points
+        return scan_points * rotation_matrix
 
     def as_pose(self):
         """ A helper function to convert a particle to a geometry_msgs/Pose
@@ -201,7 +228,6 @@ class ParticleFilter:
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
 
-
         self.particle_cloud = None
 
         # change use_projected_stable_scan to True to use point clouds instead
@@ -277,7 +303,7 @@ class ParticleFilter:
             old_odom_xy_theta = self.current_odom_xy_theta
             delta = (new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
                      new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
-                     angle_diff(new_odom_xy_theta[2] - self.current_odom_xy_theta[2]))
+                     angle_diff(new_odom_xy_theta[2], self.current_odom_xy_theta[2]))
 
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
@@ -310,8 +336,41 @@ class ParticleFilter:
         """ Updates the particle weights in response to the scan contained in
             the msg
         """
-        # TODO: implement this
-        pass
+        # create or reuse big rotation matrix to transform laser scan into
+        # points around (0, 0)
+
+        thetas = np.deg2rad(
+            np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
+        )
+
+        points = np.array([
+            msg.ranges * np.cos(thetas),
+            msg.ranges * np.sin(thetas)
+        ]).T
+
+        for p in ParticleCloud(self.particle_cloud):
+            p_frame_points = p.transform_scan(points)
+
+            distances = np.array(
+                [self.occupancy_field.get_closest_obstacle_distance(point[0, 0], point[0, 1]) for point in p_frame_points]
+            )
+
+            # if any of the points are off the map
+            if np.isnan(distances).any():
+                p.w = 0.0  # eliminate this
+                continue
+
+            sigma = 0.1  # how noisy the measurements are
+            likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
+
+            p.w = np.mean(likes)
+
+        # filter out all zero values in particle_cloud
+        self.particle_cloud = (
+            self.particle_cloud[0 != self.particle_cloud[:, 0]]
+        )
+
+        self.normalize_particles()
 
     @staticmethod
     def draw_random_sample(choices, probabilities, n):

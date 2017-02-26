@@ -30,7 +30,7 @@ from scipy import stats
 from helper_functions import (convert_pose_inverse_transform,
                               convert_translation_rotation_to_pose,
                               convert_pose_to_xy_and_theta,
-                              angle_diff)
+                              angle_diff,angle_normalize)
 
 
 class ParticleCloud(object):
@@ -176,6 +176,10 @@ class ParticleFilter:
 
         # TODO: define additional constants if needed
 
+                
+        self.xy_spread = 10.0
+        self.theta_spread = 2 * math.pi
+
         # Setup pubs and subs
 
         # pose_listener responds to selection of a new approximate robot
@@ -275,14 +279,16 @@ class ParticleFilter:
         # compute the change in x,y,theta since our last update
         if self.current_odom_xy_theta:
             old_odom_xy_theta = self.current_odom_xy_theta
-            delta = (new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
+            delta = np.array([new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
                      new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
-                     new_odom_xy_theta[2] - self.current_odom_xy_theta[2])
+                     new_odom_xy_theta[2] - self.current_odom_xy_theta[2]])
 
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
+
+
 
         # TODO: modify particles using delta
         # For added difficulty: Implement sample_motion_odometry
@@ -350,20 +356,16 @@ class ParticleFilter:
         if xy_theta is None:
             xy_theta = convert_pose_to_xy_and_theta(self.odom_pose.pose)
         self.particle_cloud = None
-        # TODO create particles
-
-        num_points = 300
-        xy_spread = 10.0
-        theta_spread = 2 * math.pi
-
+        
+        #generate random particles about XY_Theta
         random_points = np.random.normal(
             loc=xy_theta,
-            scale=[xy_spread, xy_spread, theta_spread],
-            size=(num_points, 3)
+            scale=[self.xy_spread, self.xy_spread, self.theta_spread],
+            size=(self.n_particles, 3)
         )
 
         # initialize cloud with equal weights
-        initial_weights = np.ones((num_points, 1))  # generate column of ones
+        initial_weights = np.ones((self.n_particles, 1))  # generate column of ones
 
         # concat weights with generated points
         self.particle_cloud = np.concatenate(
@@ -502,8 +504,6 @@ class ParticleFilter:
     def fix_map_to_odom_transform(self, msg):
         """ This method constantly updates the offset of the map and odometry
             coordinate systems based on the latest results from the localizer
-            TODO: if you want to learn a lot about tf, reimplement this...
-            I can provide you with some hints as to what is going on here.
         """
         translation, rotation = convert_pose_inverse_transform(self.robot_pose)
         p = PoseStamped(

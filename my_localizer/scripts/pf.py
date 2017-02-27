@@ -202,15 +202,15 @@ class ParticleFilter:
         self.laser_max_distance = 2.0
 
         # spreads for init
-        self.xy_spread = 5.0
+        self.xy_spread = 1.0
         self.theta_spread = 2 * math.pi
         # odom update error
-        self.xy_odom_spread = 0.01
-        self.theta_odom_spread = 0.01 * math.pi
+        self.xy_odom_spread = 1.0
+        self.theta_odom_spread = 1.0 * math.pi
         # resampling induced error
-        self.resample_x_scale = .05
-        self.resample_y_scale = .05
-        self.resample_theta_scale = .2 / math.pi
+        self.resample_x_scale = .5
+        self.resample_y_scale = .5
+        self.resample_theta_scale = 1.0 * math.pi
 
         # Setup pubs and subs
 

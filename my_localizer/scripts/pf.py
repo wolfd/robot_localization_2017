@@ -203,14 +203,14 @@ class ParticleFilter:
 
         # spreads for init
         self.xy_spread = 1.0
-        self.theta_spread = 2 * math.pi
+        self.theta_spread = .02 * math.pi
         # odom update error
-        self.xy_odom_spread = 1.0
-        self.theta_odom_spread = 1.0 * math.pi
+        self.xy_odom_spread = .005
+        self.theta_odom_spread = .005 * math.pi
         # resampling induced error
         self.resample_x_scale = .5
         self.resample_y_scale = .5
-        self.resample_theta_scale = 1.0 * math.pi
+        self.resample_theta_scale = .2 * math.pi
 
         # Setup pubs and subs
 
@@ -394,6 +394,7 @@ class ParticleFilter:
         probable_particles[:, 0] = initial_weights
 
         self.particle_cloud = probable_particles
+        
 
     def get_likelihood(self, p_frame_points):
         distances = []

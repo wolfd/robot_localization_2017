@@ -202,15 +202,15 @@ class ParticleFilter:
         self.laser_max_distance = 2.0
 
         # spreads for init
-        self.xy_spread = 1.0
+        self.xy_spread = 0.25
         self.theta_spread = .02 * math.pi
         # odom update error
         self.xy_odom_spread = .005
         self.theta_odom_spread = .005 * math.pi
         # resampling induced error
-        self.resample_x_scale = .5
-        self.resample_y_scale = .5
-        self.resample_theta_scale = .2 * math.pi
+        self.resample_x_scale = .25
+        self.resample_y_scale = .25
+        self.resample_theta_scale = .05 * math.pi
 
         # Setup pubs and subs
 
@@ -277,9 +277,9 @@ class ParticleFilter:
                 (2): compute the most likely pose
                      (i.e. the mode of the distribution)
         """
-        # first make sure that the particle weights are normalized
+        # make sure that the particle weights are normalized
         self.normalize_particles()
-
+        # find the particle with the max weight and publish its pose
         max_weight_index = np.argmax(self.particle_cloud[:, 0])
 
         print("update robot pose index {}".format(max_weight_index))
@@ -316,15 +316,21 @@ class ParticleFilter:
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
+
         # random_delta_error based on odomspread constants and delta
+        # simulates encoder error
 
-        scale = [
-            math.fabs(delta[0] * self.xy_odom_spread),
-            math.fabs(delta[1] * self.xy_odom_spread),
-            math.fabs(delta[2] * self.theta_odom_spread)
-        ]
+        #make sure thetascale is not 0 even if theta has not changed
+        if delta[2] == 0:
+            delta[2] = .00005
 
-        print scale
+        scale = np.array([
+            abs(delta[0] * self.xy_odom_spread),
+            abs(delta[1] * self.xy_odom_spread),
+            abs(delta[2] * self.theta_odom_spread)
+        ]) 
+
+        
         random_delta_error = np.random.normal(
             loc=[0, 0, 0],
             scale=scale,
@@ -397,6 +403,7 @@ class ParticleFilter:
         
 
     def get_likelihood(self, p_frame_points):
+        # generate array of distances
         distances = []
         for point in p_frame_points[::10, :]:
             distances.append(
@@ -408,8 +415,8 @@ class ParticleFilter:
         distances = np.array(distances)
 
         # if any of the points are off the map
-        if np.isnan(distances).any():
-            return 0.0  # eliminate this
+        #if np.isnan(distances).any():
+            #return 0.0  # eliminate this
 
         sigma = 0.1  # how noisy the measurements are
         likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
@@ -451,7 +458,7 @@ class ParticleFilter:
         """
         values = np.array(range(len(choices)))
         probs = np.array(probabilities)
-        bins = np.add.accumulate(probs)
+        bins = np.add.accumulate(probabilities)
         inds = values[np.digitize(random_sample(n), bins)]
         samples = []
         for i in inds:
@@ -504,7 +511,8 @@ class ParticleFilter:
         """
         weight_sum = np.sum(self.particle_cloud[:, 0])  # grab the weights
 
-        normalized_weight_column = self.particle_cloud[:, 0] / weight_sum
+        normalized_weight_column = self.particle_cloud[:, 0] / weight_sum #normalize
+
         # reshape it so it's actually a column
         normalized_weight_column = normalized_weight_column.reshape(
             (normalized_weight_column.shape[0], 1)
@@ -518,6 +526,7 @@ class ParticleFilter:
 
     def publish_particles(self, msg):
         particles_conv = []
+        #translate between ParticleCloud object and our numpy array
         for p in ParticleCloud(self.particle_cloud):
             particles_conv.append(p.as_pose())
         # actually send the message so that we can view it in rviz

@@ -30,7 +30,7 @@ from scipy import stats
 from helper_functions import (convert_pose_inverse_transform,
                               convert_translation_rotation_to_pose,
                               convert_pose_to_xy_and_theta,
-                              angle_diff,angle_normalize)
+                              angle_diff, angle_normalize)
 
 
 class ParticleCloud(object):
@@ -74,17 +74,44 @@ class Particle(object):
     #     self.theta = theta
     #     self.x = x
     #     self.y = y
+    name_mapping = dict(w=0, x=1, y=2, theta=3)
 
     def __init__(self, np_particle):
-        self.name_mapping = dict(w=0, x=1, y=2, theta=3)
         self.view = np_particle
 
     def __getattr__(self, name):
-        if name in self.name_mapping:
-            index = self.name_mapping[name]
+        if name in Particle.name_mapping:
+            index = Particle.name_mapping[name]
             return self.view[index]
         else:
-            raise AttributeError
+            raise AttributeError(
+                "%r object has no attribute %r" % (self.__class__, attr)
+            )
+
+    def __setattr__(self, name, value):
+        if name in Particle.name_mapping:
+            index = Particle.name_mapping[name]
+            self.view[index] = value
+        else:
+            object.__setattr__(self, name, value)
+
+    def transform_scan(self, scan_points):
+        """ Transforms a set of laser scan points from the base_link frame into
+            the local to this particle frame.
+
+            scan_points: numpy matrix of n rows, 2 columns (x, y)
+
+            returns an n row, 2 column matrix of transformed points
+        """
+        # translate scan_points
+        scan_points = scan_points + [self.x, self.y]
+
+        # generate rotation matrix
+        c, s = np.cos(self.theta), np.sin(self.theta)
+        rotation_matrix = np.matrix([[c, -s], [s, c]])
+
+        # rotate points
+        return scan_points * rotation_matrix
 
     def as_pose(self):
         """ A helper function to convert a particle to a geometry_msgs/Pose
@@ -174,10 +201,10 @@ class ParticleFilter:
         # maximum penalty to assess in the likelihood field model
         self.laser_max_distance = 2.0
 
-        #spreads for init       
+        # spreads for init
         self.xy_spread = 10.0
         self.theta_spread = 2 * math.pi
-        #odom update error
+        # odom update error
         self.xy_odomspread = 0.01
         self.thetaodom_spread = 0.01 * math.pi
         #resampling induced error
@@ -210,7 +237,6 @@ class ParticleFilter:
         # enable listening for and broadcasting coordinate transforms
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
-
 
         self.particle_cloud = None
 
@@ -281,28 +307,28 @@ class ParticleFilter:
         # compute the change in x,y,theta since our last update
         if self.current_odom_xy_theta:
             old_odom_xy_theta = self.current_odom_xy_theta
-            delta = np.array([self.current_odom_xy_theta[0] - new_odom_xy_theta[0],
-                     self.current_odom_xy_theta[1] - new_odom_xy_theta[1],
-                     angle_diff(new_odom_xy_theta[2],self.current_odom_xy_theta[2])])
+            delta = np.array([
+                self.current_odom_xy_theta[0] - new_odom_xy_theta[0],
+                self.current_odom_xy_theta[1] - new_odom_xy_theta[1],
+                angle_diff(new_odom_xy_theta[2], self.current_odom_xy_theta[2])
+            ])
 
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
-        #random_deltaerror based on odomspread constants and delta
+        # random_deltaerror based on odomspread constants and delta
         random_deltaerror = np.random.normal(
-            loc=[0,0,0],
-            scale=[math.fabs(delta[0]*self.xy_odomspread), math.fabs(delta[1]*self.xy_odomspread), math.fabs(delta[2]*self.thetaodom_spread)],
+            loc=[0, 0, 0],
+            scale=[math.fabs(delta[0] * self.xy_odomspread), math.fabs(delta[1] * self.xy_odomspread), math.fabs(delta[2] * self.thetaodom_spread)],
             size=(self.n_particles, 3)
         )
 
-        # add zero to the weights 
+        # add zero to the weights
         zero_weights = np.zeros((self.n_particles, 1))  # generate column of ones
 
-
-        #add delta to every element of random deltaerror
-        random_delta = np.add(random_deltaerror,delta)
-
+        # add delta to every element of random deltaerror
+        random_delta = np.add(random_deltaerror, delta)
 
         # concat weights with generated points
         random_delta = np.concatenate(
@@ -310,16 +336,12 @@ class ParticleFilter:
             axis=1
         )
 
+
         #add randomized delta to particle cloud
         self.particle_cloud = np.add(random_delta,self.particle_cloud)
 
-        #normalize angles
-
-        self.particle_cloud[:,2] = angle_normalize(self.particle_cloud[:,2])
-
-
-
-
+        # normalize angles
+        self.particle_cloud[:, 3] = angle_normalize(self.particle_cloud[:, 3])
 
     def map_calc_range(self, x, y, theta):
         """ Difficulty Level 3: implement a ray tracing likelihood model...
@@ -371,8 +393,43 @@ class ParticleFilter:
         """ Updates the particle weights in response to the scan contained in
             the msg
         """
-        # TODO: implement this
-        pass
+        # create or reuse big rotation matrix to transform laser scan into
+        # points around (0, 0)
+        start_time = rospy.get_time()
+        thetas = np.deg2rad(
+            np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
+        )
+
+        points = np.array([
+            msg.ranges * np.cos(thetas),
+            msg.ranges * np.sin(thetas)
+        ]).T
+
+        for p in ParticleCloud(self.particle_cloud):
+            p_frame_points = p.transform_scan(points)
+
+            distances = np.array(
+                [self.occupancy_field.get_closest_obstacle_distance(point[0, 0], point[0, 1]) for point in p_frame_points]
+            )
+
+            # if any of the points are off the map
+            if np.isnan(distances).any():
+                p.w = 0.0  # eliminate this
+                continue
+
+            sigma = 0.1  # how noisy the measurements are
+            likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
+
+            p.w = np.mean(likes)
+
+        # filter out all zero values in particle_cloud
+        # self.particle_cloud = (
+        #     self.particle_cloud[0 != self.particle_cloud[:, 0]]
+        # )
+
+        self.normalize_particles()
+
+        print rospy.get_time() - start_time
 
     @staticmethod
     def draw_random_sample(choices, probabilities, n):
@@ -411,8 +468,8 @@ class ParticleFilter:
         if xy_theta is None:
             xy_theta = convert_pose_to_xy_and_theta(self.odom_pose.pose)
         self.particle_cloud = None
-        
-        #generate random particles about XY_Theta
+
+        # generate random particles about XY_Theta
         random_points = np.random.normal(
             loc=xy_theta,
             scale=[self.xy_spread, self.xy_spread, self.theta_spread],
@@ -420,7 +477,8 @@ class ParticleFilter:
         )
 
         # initialize cloud with equal weights
-        initial_weights = np.ones((self.n_particles, 1))  # generate column of ones
+        # generate column of ones
+        initial_weights = np.ones((self.n_particles, 1))
 
         # concat weights with generated points
         self.particle_cloud = np.concatenate(

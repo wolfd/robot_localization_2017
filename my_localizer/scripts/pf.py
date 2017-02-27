@@ -196,17 +196,17 @@ class ParticleFilter:
         self.d_thresh = 0.2
 
         # the amount of angular movement before performing an update
-        self.a_thresh = math.pi/6
+        self.a_thresh = math.pi / 6
 
         # maximum penalty to assess in the likelihood field model
         self.laser_max_distance = 2.0
 
         # spreads for init
-        self.xy_spread = 10.0
+        self.xy_spread = 5.0
         self.theta_spread = 2 * math.pi
         # odom update error
-        self.xy_odomspread = 0.01
-        self.thetaodom_spread = 0.01 * math.pi
+        self.xy_odom_spread = 0.01
+        self.theta_odom_spread = 0.01 * math.pi
         # resampling induced error
         self.resample_x_scale = .05
         self.resample_y_scale = .05
@@ -316,18 +316,27 @@ class ParticleFilter:
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
-        # random_deltaerror based on odomspread constants and delta
-        random_deltaerror = np.random.normal(
+        # random_delta_error based on odomspread constants and delta
+
+        scale = [
+            math.fabs(delta[0] * self.xy_odom_spread),
+            math.fabs(delta[1] * self.xy_odom_spread),
+            math.fabs(delta[2] * self.theta_odom_spread)
+        ]
+
+        print scale
+        random_delta_error = np.random.normal(
             loc=[0, 0, 0],
-            scale=[math.fabs(delta[0] * self.xy_odomspread), math.fabs(delta[1] * self.xy_odomspread), math.fabs(delta[2] * self.thetaodom_spread)],
+            scale=scale,
             size=(self.n_particles, 3)
         )
 
         # add zero to the weights
-        zero_weights = np.zeros((self.n_particles, 1))  # generate column of ones
+        # generate column of zeros
+        zero_weights = np.zeros((self.n_particles, 1))
 
         # add delta to every element of random deltaerror
-        random_delta = np.add(random_deltaerror, delta)
+        random_delta = np.add(random_delta_error, delta)
 
         # concat weights with generated points
         random_delta = np.concatenate(
@@ -336,7 +345,7 @@ class ParticleFilter:
         )
 
         # add randomized delta to particle cloud
-        self.particle_cloud = np.add(random_delta,self.particle_cloud)
+        self.particle_cloud = np.add(random_delta, self.particle_cloud)
 
         # normalize angles
         self.particle_cloud[:, 3] = angle_normalize(self.particle_cloud[:, 3])
@@ -359,28 +368,51 @@ class ParticleFilter:
         self.normalize_particles()
 
         # make cloud of probable particles
-        probable_particles = draw_random_sample(particle_cloud, particle_cloud[:,0],n_particles)
+        probable_particles = ParticleFilter.draw_random_sample(
+            self.particle_cloud,  # choices
+            self.particle_cloud[:, 0],  # probability weights
+            self.n_particles  # number of points
+        )
+
+        probable_particles = np.array(probable_particles)
 
         # introduce random error to each particle
 
-        x_error = np.random.sample((self.n_particles, 1)) * self.resample_x_scale
-        y_error = np.random.sample((self.n_particles, 1)) * self.resample_y_scale
-        theta_error = np.random.sample((self.n_particles, 1)) * self.resample_theta_scale
+        x_error = np.random.sample(self.n_particles) * self.resample_x_scale
+        y_error = np.random.sample(self.n_particles) * self.resample_y_scale
+        theta_error = np.random.sample(self.n_particles) * self.resample_theta_scale
 
-        probable_particles[:, 0] = probable_particles[:, 0] + x_error
+        probable_particles[:, 1] = probable_particles[:, 1] + x_error
 
-        probable_particles[:, 1] = probable_particles[:, 1] + y_error
+        probable_particles[:, 2] = probable_particles[:, 2] + y_error
 
-        probable_particles[:, 2] = probable_particles[:, 2] + theta_error
+        probable_particles[:, 3] = probable_particles[:, 3] + theta_error
 
         # resample cloud with equal weights
-        initial_weights = np.ones((self.n_particles, 1))  # generate column of ones
+        # generate column of ones
+        initial_weights = np.ones(self.n_particles)
+        probable_particles[:, 0] = initial_weights
 
-        # concat weights with generated points
-        self.particle_cloud = np.concatenate(
-            (initial_weights, probable_points),
-            axis=1
-        )
+        self.particle_cloud = probable_particles
+
+    def get_likelihood(self, p_frame_points):
+        distances = []
+        for point in p_frame_points[::10, :]:
+            distances.append(
+                self.occupancy_field.get_closest_obstacle_distance(
+                    point[0, 0], point[0, 1]
+                )
+            )
+
+        distances = np.array(distances)
+
+        # if any of the points are off the map
+        if np.isnan(distances).any():
+            return 0.0  # eliminate this
+
+        sigma = 0.1  # how noisy the measurements are
+        likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
+        return np.mean(likes)
 
     def update_particles_with_laser(self, msg):
         """ Updates the particle weights in response to the scan contained in
@@ -388,7 +420,6 @@ class ParticleFilter:
         """
         # create or reuse big rotation matrix to transform laser scan into
         # points around (0, 0)
-        start_time = rospy.get_time()
         thetas = np.deg2rad(
             np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
         )
@@ -398,31 +429,15 @@ class ParticleFilter:
             msg.ranges * np.sin(thetas)
         ]).T
 
+        start_time = time.time()
         for p in ParticleCloud(self.particle_cloud):
             p_frame_points = p.transform_scan(points)
 
-            distances = np.array(
-                [self.occupancy_field.get_closest_obstacle_distance(point[0, 0], point[0, 1]) for point in p_frame_points]
-            )
+            p.w = self.get_likelihood(p_frame_points)
 
-            # if any of the points are off the map
-            if np.isnan(distances).any():
-                p.w = 0.0  # eliminate this
-                continue
-
-            sigma = 0.1  # how noisy the measurements are
-            likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
-
-            p.w = np.mean(likes)
-
-        # filter out all zero values in particle_cloud
-        # self.particle_cloud = (
-        #     self.particle_cloud[0 != self.particle_cloud[:, 0]]
-        # )
+        print time.time() - start_time
 
         self.normalize_particles()
-
-        print rospy.get_time() - start_time
 
     @staticmethod
     def draw_random_sample(choices, probabilities, n):

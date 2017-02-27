@@ -207,11 +207,10 @@ class ParticleFilter:
         # odom update error
         self.xy_odomspread = 0.01
         self.thetaodom_spread = 0.01 * math.pi
-        #resampling induced error
-        self.resample_xscale = .05
-        self.resample_yscale = .05
-        self.resample_thetascale = .2/pi
-
+        # resampling induced error
+        self.resample_x_scale = .05
+        self.resample_y_scale = .05
+        self.resample_theta_scale = .2 / math.pi
 
         # Setup pubs and subs
 
@@ -336,8 +335,7 @@ class ParticleFilter:
             axis=1
         )
 
-
-        #add randomized delta to particle cloud
+        # add randomized delta to particle cloud
         self.particle_cloud = np.add(random_delta,self.particle_cloud)
 
         # normalize angles
@@ -359,35 +357,30 @@ class ParticleFilter:
         """
         # make sure the distribution is normalized
         self.normalize_particles()
-        
 
-        #make cloud of probable particles
-        probable_particles = draw_random_sample(particle_cloud,particle_cloud[:,0],n_particles)
+        # make cloud of probable particles
+        probable_particles = draw_random_sample(particle_cloud, particle_cloud[:,0],n_particles)
 
-        #introduce random error to each particle
+        # introduce random error to each particle
 
-        xerror = np.random.sample(300,1) * self.resample_xscale()
-        yerror = np.random.sample(300,1) * self.resample_yscale()
-        thetaerror = np.random.sample(300,1) * self.resample_thetascale()
+        x_error = np.random.sample((self.n_particles, 1)) * self.resample_x_scale
+        y_error = np.random.sample((self.n_particles, 1)) * self.resample_y_scale
+        theta_error = np.random.sample((self.n_particles, 1)) * self.resample_theta_scale
 
-        probable_particles[:,0] = probable_particles[:,0] + xerror
+        probable_particles[:, 0] = probable_particles[:, 0] + x_error
 
-        probable_particles[:,1] = probable_particles[:,1] + yerror
+        probable_particles[:, 1] = probable_particles[:, 1] + y_error
 
-        probable_particles[:,2] = probable_particles[:,2] + thetaerror
+        probable_particles[:, 2] = probable_particles[:, 2] + theta_error
 
         # resample cloud with equal weights
         initial_weights = np.ones((self.n_particles, 1))  # generate column of ones
 
-
-
-       # concat weights with generated points
+        # concat weights with generated points
         self.particle_cloud = np.concatenate(
             (initial_weights, probable_points),
             axis=1
         )
-
-
 
     def update_particles_with_laser(self, msg):
         """ Updates the particle weights in response to the scan contained in

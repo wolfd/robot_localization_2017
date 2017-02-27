@@ -180,6 +180,11 @@ class ParticleFilter:
         #odom update error
         self.xy_odomspread = 0.01
         self.thetaodom_spread = 0.01 * math.pi
+        #resampling induced error
+        self.resample_xscale = .05
+        self.resample_yscale = .05
+        self.resample_thetascale = .2/pi
+
 
         # Setup pubs and subs
 
@@ -250,10 +255,6 @@ class ParticleFilter:
         # first make sure that the particle weights are normalized
         self.normalize_particles()
 
-        # TODO: assign the lastest pose into self.robot_pose as a geometry_msgs
-        #       Pose object
-        # just to get started we will fix the robot's pose to always be at the
-        # origin
         max_weight_index = np.argmax(self.particle_cloud[:, 0])
 
         print("update robot pose index {}".format(max_weight_index))
@@ -314,7 +315,7 @@ class ParticleFilter:
 
         #normalize angles
 
-        self.particle_cloud[0:2] = angle_normalize(self.particle_cloud[:,2])
+        self.particle_cloud[:,2] = angle_normalize(self.particle_cloud[:,2])
 
 
 
@@ -336,7 +337,35 @@ class ParticleFilter:
         """
         # make sure the distribution is normalized
         self.normalize_particles()
-        # TODO: fill out the rest of the implementation
+        
+
+        #make cloud of probable particles
+        probable_particles = draw_random_sample(particle_cloud,particle_cloud[:,0],n_particles)
+
+        #introduce random error to each particle
+
+        xerror = np.random.sample(300,1) * self.resample_xscale()
+        yerror = np.random.sample(300,1) * self.resample_yscale()
+        thetaerror = np.random.sample(300,1) * self.resample_thetascale()
+
+        probable_particles[:,0] = probable_particles[:,0] + xerror
+
+        probable_particles[:,1] = probable_particles[:,1] + yerror
+
+        probable_particles[:,2] = probable_particles[:,2] + thetaerror
+
+        # resample cloud with equal weights
+        initial_weights = np.ones((self.n_particles, 1))  # generate column of ones
+
+
+
+       # concat weights with generated points
+        self.particle_cloud = np.concatenate(
+            (initial_weights, probable_points),
+            axis=1
+        )
+
+
 
     def update_particles_with_laser(self, msg):
         """ Updates the particle weights in response to the scan contained in

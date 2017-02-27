@@ -51,7 +51,7 @@ def convert_pose_to_xy_and_theta(pose):
 
 def angle_normalize(z):
     """ convenience function to map an angle to the range [-pi,pi] """
-    return math.atan2(math.sin(z), math.cos(z))
+    return np.arctan2(np.sin(z), np.cos(z))
 
 def angle_diff(a, b):
     """ Calculates the difference between angle a and angle b (both should be in radians)

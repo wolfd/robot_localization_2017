@@ -6,9 +6,10 @@ from __future__ import division
 
 import rospy
 
-from std_msgs.msg import Header, String
+from std_msgs.msg import Header, String, ColorRGBA
 from sensor_msgs.msg import LaserScan, PointCloud
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, PoseArray, Pose, Point, Quaternion
+from geometry_msgs.msg import Vector3, PoseStamped, PoseWithCovarianceStamped, PoseArray, Pose, Point, Quaternion
+from visualization_msgs.msg import MarkerArray, Marker
 from nav_msgs.srv import GetMap
 from copy import deepcopy
 
@@ -49,9 +50,23 @@ class ParticleCloud(object):
     def __getitem__(self, key):
         return Particle(self.np_particles[key, :])
 
+    def get_top_particle(self):
+        max_weight_index = np.argmax(self.np_particles[:, 0])
+
+        return self[max_weight_index]
+
+    def get_markers(self):
+        markers = []
+
+        max_weight = max([p.w for p in self])
+
+        for i in range(len(self)):
+            markers.append(self[i]._as_marker(i, max_weight))
+
+        return markers
+
 
 class Particle(object):
-
     """ Represents a hypothesis (particle) of the robot's pose consisting of
         x,y and theta (yaw)
         Attributes:
@@ -62,24 +77,22 @@ class Particle(object):
                weights are normalized
     """
 
-    # def __init__(self,x=0.0,y=0.0,theta=0.0,w=1.0):
-    #     """ Construct a new Particle
-    #         x: the x-coordinate of the hypothesis relative to the map frame
-    #         y: the y-coordinate of the hypothesis relative ot the map frame
-    #         theta: the yaw of the hypothesis relative to the map frame
-    #         w: the particle weight (the class does not ensure that particle
-    #            weights are normalized
-    #     """
-    #     self.w = w
-    #     self.theta = theta
-    #     self.x = x
-    #     self.y = y
     name_mapping = dict(w=0, x=1, y=2, theta=3)
 
     def __init__(self, np_particle):
+        """ Construct a new Particle
+            Uses a view into a numpy matrix
+        """
         self.view = np_particle
 
     def __getattr__(self, name):
+        """ Provides access to the underlying data
+            x: the x-coordinate of the hypothesis relative to the map frame
+            y: the y-coordinate of the hypothesis relative ot the map frame
+            theta: the yaw of the hypothesis relative to the map frame
+            w: the particle weight (the class does not ensure that particle
+               weights are normalized
+        """
         if name in Particle.name_mapping:
             index = Particle.name_mapping[name]
             return self.view[index]
@@ -111,7 +124,9 @@ class Particle(object):
         rotation_matrix = np.matrix([[c, -s], [s, c]])
 
         # rotate points
-        return scan_points * rotation_matrix
+        rotated = np.dot(rotation_matrix, scan_points.T).T
+
+        return rotated
 
     def as_pose(self):
         """ A helper function to convert a particle to a geometry_msgs/Pose
@@ -131,6 +146,19 @@ class Particle(object):
                 z=orientation_tuple[2],
                 w=orientation_tuple[3]
             )
+        )
+
+    def _as_marker(self, index, max_weight):
+        return Marker(
+            type=Marker.ARROW,
+            header=Header(
+                stamp=rospy.Time.now(),
+                frame_id='map'
+            ),
+            id=index,
+            pose=self.as_pose(),
+            scale=Vector3(0.2, 0.05, 0.05),
+            color=ColorRGBA(0.0, self.w / max_weight, 0.0, 0.4)
         )
 
     # TODO: define additional helper functions if needed
@@ -190,7 +218,7 @@ class ParticleFilter:
         self.scan_topic = "scan"
 
         # the number of particles to use
-        self.n_particles = 300
+        self.n_particles = 100
 
         # the amount of linear movement before performing an update
         self.d_thresh = 0.2
@@ -226,6 +254,24 @@ class ParticleFilter:
         # This enables viewing particles in rviz.
         self.particle_pub = rospy.Publisher(
             "particlecloud",
+            PoseArray,
+            queue_size=10
+        )
+
+        self.marker_pub = rospy.Publisher(
+            "markercloud",
+            MarkerArray,
+            queue_size=10
+        )
+
+        self.transformed_scans = rospy.Publisher(
+            "transformedscans",
+            MarkerArray,
+            queue_size=10
+        )
+
+        self.top_particle = rospy.Publisher(
+            "top_particle",
             PoseArray,
             queue_size=10
         )
@@ -270,6 +316,26 @@ class ParticleFilter:
         # self.occupancy_field = OccupancyField(map)
         self.initialized = True
 
+    def make_pose(self, x, y, theta):
+        """ A helper function to convert a particle to a geometry_msgs/Pose
+            message
+        """
+        orientation_tuple = tf.transformations.quaternion_from_euler(
+            0,
+            0,
+            theta
+        )
+
+        return Pose(
+            position=Point(x=x, y=y, z=0),
+            orientation=Quaternion(
+                x=orientation_tuple[0],
+                y=orientation_tuple[1],
+                z=orientation_tuple[2],
+                w=orientation_tuple[3]
+            )
+        )
+
     def update_robot_pose(self):
         """ Update the estimate of the robot's pose given the updated particles.
             There are two logical methods for this:
@@ -280,14 +346,26 @@ class ParticleFilter:
         # make sure that the particle weights are normalized
         self.normalize_particles()
         # find the particle with the max weight and publish its pose
-        max_weight_index = np.argmax(self.particle_cloud[:, 0])
+        # max_weight_index = np.argmax(self.particle_cloud[:, 0])
 
-        print("update robot pose index {}".format(max_weight_index))
-        if max_weight_index != -1:
-            particle = ParticleCloud(self.particle_cloud)[max_weight_index]
-            self.robot_pose = particle.as_pose()
-        else:
-            self.robot_pose = Pose()
+        particles_w = self.particle_cloud[:, 0]
+        particles_x = self.particle_cloud[:, 1]
+        particles_y = self.particle_cloud[:, 2]
+        particles_theta = self.particle_cloud[:, 3]
+        sum_x = np.sum(particles_w * particles_x)
+        sum_y = np.sum(particles_w * particles_y)
+        sum_theta = np.sum(particles_w * particles_theta)
+
+        average_pose = self.make_pose(sum_x, sum_y, sum_theta)
+
+        self.robot_pose = average_pose
+
+        # print("update robot pose index {}".format(max_weight_index))
+        # if max_weight_index != -1:
+        #     particle = ParticleCloud(self.particle_cloud)[max_weight_index]
+        #     self.robot_pose = particle.as_pose()
+        # else:
+        #     self.robot_pose = Pose()
 
     def projected_scan_received(self, msg):
         self.last_projected_stable_scan = msg
@@ -416,10 +494,11 @@ class ParticleFilter:
 
         distances = np.array(distances)
 
+        # if any of the points are off the map
         if np.isnan(distances).any():
             return 0.0
 
-        sigma = 0.1  # how noisy the measurements are
+        sigma = 0.05  # how noisy the measurements are
         likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
         return np.mean(likes)
 
@@ -429,9 +508,7 @@ class ParticleFilter:
         """
         # create or reuse big rotation matrix to transform laser scan into
         # points around (0, 0)
-        thetas = np.deg2rad(
-            np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
-        )
+        thetas = np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
 
         points = np.array([
             msg.ranges * np.cos(thetas),
@@ -447,7 +524,47 @@ class ParticleFilter:
         print time.time() - start_time
 
         self.normalize_particles()
-        print self.particle_cloud[::10, 0]
+
+        self.publish_top_particle_laser(points)
+
+    def publish_top_particle_laser(self, points):
+        top = ParticleCloud(self.particle_cloud).get_top_particle()
+        viz_points = []
+
+        p_frame_points = top.transform_scan(points)
+
+        for t_p in p_frame_points:
+            viz_points.append(
+                Point(t_p[0, 0], t_p[0, 1], 0.0)
+            )
+
+        self.top_particle.publish(
+            PoseArray(
+                header=Header(
+                    stamp=rospy.Time.now(),
+                    frame_id=self.map_frame
+                ),
+                poses=[top.as_pose()]
+            )
+        )
+        self.transformed_scans.publish(
+            MarkerArray(
+                markers=[Marker(
+                    type=Marker.POINTS,
+                    header=Header(
+                        stamp=rospy.Time.now(),
+                        frame_id='map'
+                    ),
+                    id=1,
+                    pose=Pose(
+                        position=Vector3(0.0, 0.0, 0.0)
+                    ),
+                    points=viz_points,
+                    scale=Vector3(0.05, 0.05, 0.05),
+                    color=ColorRGBA(0.0, 0.0, 1.0, 0.4)
+                )]
+            )
+        )
 
     @staticmethod
     def draw_random_sample(choices, probabilities, n):
@@ -512,7 +629,8 @@ class ParticleFilter:
             (i.e. sum to 1.0)
         """
         weight_sum = np.sum(self.particle_cloud[:, 0])  # grab the weights
-        print weight_sum
+
+        # normalize
         normalized_weight_column = self.particle_cloud[:, 0] / weight_sum
 
         # reshape it so it's actually a column
@@ -526,11 +644,23 @@ class ParticleFilter:
             axis=1
         )
 
+    def publish_markers(self):
+        particle_cloud_view = ParticleCloud(self.particle_cloud)
+        markers_conv = particle_cloud_view.get_markers()
+        self.marker_pub.publish(
+            MarkerArray(
+                markers=markers_conv
+            )
+        )
+
     def publish_particles(self, msg):
         particles_conv = []
-        #translate between ParticleCloud object and our numpy array
-        for p in ParticleCloud(self.particle_cloud):
+
+        particle_cloud_view = ParticleCloud(self.particle_cloud)
+        # translate between ParticleCloud object and our numpy array
+        for p in particle_cloud_view:
             particles_conv.append(p.as_pose())
+
         # actually send the message so that we can view it in rviz
         self.particle_pub.publish(
             PoseArray(
@@ -592,7 +722,7 @@ class ParticleFilter:
         # store the the odometry pose in a more convenient format (x,y,theta)
         new_odom_xy_theta = convert_pose_to_xy_and_theta(self.odom_pose.pose)
 
-        if self.particle_cloud is None:
+        if self.particle_cloud is None or self.current_odom_xy_theta is None:
             # now that we have all of the necessary transforms we can update
             # the particle cloud
             self.initialize_particle_cloud()
@@ -625,8 +755,10 @@ class ParticleFilter:
             # update robot's pose
             self.update_robot_pose()
 
+            self.publish_markers()
+
             # resample particles to focus on areas of high density
-            self.resample_particles()
+            # self.resample_particles()
 
             # update map to odom transform now that we have new particles
             self.fix_map_to_odom_transform(msg)

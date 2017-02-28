@@ -116,15 +116,16 @@ class Particle(object):
 
             returns an n row, 2 column matrix of transformed points
         """
-        # translate scan_points
-        scan_points = scan_points + [self.x, self.y]
-
+        
         # generate rotation matrix
-        c, s = np.cos(self.theta), np.sin(self.theta)
+        c, s = np.cos(self.theta + np.pi), np.sin(self.theta + np.pi)
         rotation_matrix = np.matrix([[c, -s], [s, c]])
 
         # rotate points
         rotated = np.dot(rotation_matrix, scan_points.T).T
+
+        # translate scan_points
+        rotated = rotated + [self.x, self.y]
 
         return rotated
 
@@ -158,7 +159,7 @@ class Particle(object):
             id=index,
             pose=self.as_pose(),
             scale=Vector3(0.2, 0.05, 0.05),
-            color=ColorRGBA(0.0, self.w / max_weight, 0.0, 0.4)
+            color=ColorRGBA(0.0 if index!=0 else 1.0, self.w / max_weight, 0.0, 0.4)
         )
 
     # TODO: define additional helper functions if needed
@@ -230,15 +231,17 @@ class ParticleFilter:
         self.laser_max_distance = 2.0
 
         # spreads for init
-        self.xy_spread = 0.25
-        self.theta_spread = 0.5 * math.pi
+        self.xy_spread = 0.05
+        self.theta_spread = 0.05 * math.pi
         # odom update error
-        self.xy_odom_spread = .2
-        self.theta_odom_spread = .1 * math.pi
+        self.xy_odom_spread = 1e-5#.01
+        self.theta_odom_spread = .03 * math.pi
+
+
         # resampling induced error
-        self.resample_x_scale = .25
-        self.resample_y_scale = .25
-        self.resample_theta_scale = .05 * math.pi
+        self.resample_x_scale = .3
+        self.resample_y_scale = .3
+        self.resample_theta_scale = .25 * math.pi
 
         # Setup pubs and subs
 
@@ -346,26 +349,26 @@ class ParticleFilter:
         # make sure that the particle weights are normalized
         self.normalize_particles()
         # find the particle with the max weight and publish its pose
-        # max_weight_index = np.argmax(self.particle_cloud[:, 0])
+        max_weight_index = np.argmax(self.particle_cloud[:, 0])
 
-        particles_w = self.particle_cloud[:, 0]
-        particles_x = self.particle_cloud[:, 1]
-        particles_y = self.particle_cloud[:, 2]
-        particles_theta = self.particle_cloud[:, 3]
-        sum_x = np.sum(particles_w * particles_x)
-        sum_y = np.sum(particles_w * particles_y)
-        sum_theta = np.sum(particles_w * particles_theta)
+        # particles_w = self.particle_cloud[:, 0]
+        # particles_x = self.particle_cloud[:, 1]
+        # particles_y = self.particle_cloud[:, 2]
+        # particles_theta = self.particle_cloud[:, 3]
+        # sum_x = np.sum(particles_w * particles_x)
+        # sum_y = np.sum(particles_w * particles_y)
+        # sum_theta = np.sum(particles_w * particles_theta)
 
-        average_pose = self.make_pose(sum_x, sum_y, sum_theta)
+        # average_pose = self.make_pose(sum_x, sum_y, sum_theta)
 
-        self.robot_pose = average_pose
+        # self.robot_pose = average_pose
 
         # print("update robot pose index {}".format(max_weight_index))
-        # if max_weight_index != -1:
-        #     particle = ParticleCloud(self.particle_cloud)[max_weight_index]
-        #     self.robot_pose = particle.as_pose()
-        # else:
-        #     self.robot_pose = Pose()
+        if max_weight_index != -1:
+            particle = ParticleCloud(self.particle_cloud)[max_weight_index]
+            self.robot_pose = particle.as_pose()
+        else:
+            self.robot_pose = Pose()
 
     def projected_scan_received(self, msg):
         self.last_projected_stable_scan = msg
@@ -453,8 +456,11 @@ class ParticleFilter:
             function draw_random_sample.
         """
         # make sure the distribution is normalized
-        self.normalize_particles()
 
+        self.normalize_particles()
+        return
+
+        self.normalize_particles()
         # make cloud of probable particles
         probable_particles = ParticleFilter.draw_random_sample(
             self.particle_cloud,  # choices
@@ -482,7 +488,9 @@ class ParticleFilter:
 
         self.particle_cloud = probable_particles
 
-    def get_likelihood(self, p_frame_points):
+        pass
+
+    def get_likelihood(self, p_frame_points, index=-1):
         # generate array of distances
         distances = []
         for point in p_frame_points[::10, :]:
@@ -494,11 +502,19 @@ class ParticleFilter:
 
         distances = np.array(distances)
 
+
         # if any of the points are off the map
         if np.isnan(distances).any():
             return 0.0
 
-        sigma = 0.05  # how noisy the measurements are
+
+
+        if index == 0:
+            print distances
+
+        return .3 - np.mean(distances**2)
+
+        sigma = 0.15  # how noisy the measurements are
         likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
         return np.mean(likes)
 
@@ -510,16 +526,24 @@ class ParticleFilter:
         # points around (0, 0)
         thetas = np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
 
-        points = np.array([
+        pointlist = np.array([
             msg.ranges * np.cos(thetas),
             msg.ranges * np.sin(thetas)
         ]).T
 
+        # TODO: Make this a list comprehension or np filter for speed
+        points = []
+        for p in pointlist:
+            if p[0] != 0 or p[1] != 0:
+                points.append(p)
+
+        points = np.array(points)
+
         start_time = time.time()
-        for p in ParticleCloud(self.particle_cloud):
+        for i, p in enumerate(ParticleCloud(self.particle_cloud)):
             p_frame_points = p.transform_scan(points)
 
-            p.w = self.get_likelihood(p_frame_points)
+            p.w = self.get_likelihood(p_frame_points, i)
 
         print time.time() - start_time
 
@@ -528,7 +552,7 @@ class ParticleFilter:
         self.publish_top_particle_laser(points)
 
     def publish_top_particle_laser(self, points):
-        top = ParticleCloud(self.particle_cloud).get_top_particle()
+        top = ParticleCloud(self.particle_cloud)[0]
         viz_points = []
 
         p_frame_points = top.transform_scan(points)
@@ -758,7 +782,7 @@ class ParticleFilter:
             self.publish_markers()
 
             # resample particles to focus on areas of high density
-            # self.resample_particles()
+            self.resample_particles()
 
             # update map to odom transform now that we have new particles
             self.fix_map_to_odom_transform(msg)
@@ -809,4 +833,7 @@ if __name__ == '__main__':
         # in the main loop all we do is continuously broadcast the latest map
         # to odom transform
         n.broadcast_last_transform()
-        r.sleep()
+        try:
+            r.sleep()
+        except rospy.exceptions.ROSTimeMovedBackwardsException:
+            print "time travel is fun!"

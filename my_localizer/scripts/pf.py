@@ -387,7 +387,6 @@ class ParticleFilter:
         probable_particles = np.array(probable_particles)
 
         # introduce random error to each particle
-
         x_error = np.random.sample(self.n_particles) * self.resample_x_scale
         y_error = np.random.sample(self.n_particles) * self.resample_y_scale
         theta_error = np.random.sample(self.n_particles) * self.resample_theta_scale

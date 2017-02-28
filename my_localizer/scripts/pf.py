@@ -239,9 +239,9 @@ class ParticleFilter:
 
 
         # resampling induced error
-        self.resample_x_scale = .3
-        self.resample_y_scale = .3
-        self.resample_theta_scale = .25 * math.pi
+        self.resample_x_scale = .05
+        self.resample_y_scale = .05
+        self.resample_theta_scale = .05 * math.pi
 
         # Setup pubs and subs
 
@@ -351,19 +351,7 @@ class ParticleFilter:
         # find the particle with the max weight and publish its pose
         max_weight_index = np.argmax(self.particle_cloud[:, 0])
 
-        # particles_w = self.particle_cloud[:, 0]
-        # particles_x = self.particle_cloud[:, 1]
-        # particles_y = self.particle_cloud[:, 2]
-        # particles_theta = self.particle_cloud[:, 3]
-        # sum_x = np.sum(particles_w * particles_x)
-        # sum_y = np.sum(particles_w * particles_y)
-        # sum_theta = np.sum(particles_w * particles_theta)
-
-        # average_pose = self.make_pose(sum_x, sum_y, sum_theta)
-
-        # self.robot_pose = average_pose
-
-        # print("update robot pose index {}".format(max_weight_index))
+        #check that particle with max weight is not last particle (would mean all weights are equal)
         if max_weight_index != -1:
             particle = ParticleCloud(self.particle_cloud)[max_weight_index]
             self.robot_pose = particle.as_pose()
@@ -458,13 +446,16 @@ class ParticleFilter:
         # make sure the distribution is normalized
 
         self.normalize_particles()
-        return
 
-        self.normalize_particles()
+        weights =self.particle_cloud[:, 0]
+
+        print weights
+        print np.sum(weights)
+
         # make cloud of probable particles
         probable_particles = ParticleFilter.draw_random_sample(
             self.particle_cloud,  # choices
-            self.particle_cloud[:, 0],  # probability weights
+            weights,  # probability weights
             self.n_particles  # number of points
         )
 
@@ -482,7 +473,6 @@ class ParticleFilter:
         probable_particles[:, 3] = probable_particles[:, 3] + theta_error
 
         # resample cloud with equal weights
-        # generate column of ones
         initial_weights = np.ones(self.n_particles)
         probable_particles[:, 0] = initial_weights
 
@@ -508,14 +498,11 @@ class ParticleFilter:
             return 0.0
 
 
-
-        if index == 0:
-            print distances
-
-        return .3 - np.mean(distances**2)
-
         sigma = 0.15  # how noisy the measurements are
+
+        #likelihood is exponentiated to make more likely particles weigh more
         likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
+
         return np.mean(likes)
 
     def update_particles_with_laser(self, msg):
@@ -531,27 +518,34 @@ class ParticleFilter:
             msg.ranges * np.sin(thetas)
         ]).T
 
-        # TODO: Make this a list comprehension or np filter for speed
+        #check for 0 ranges (nothing seen) and eliminate those points
         points = []
         for p in pointlist:
             if p[0] != 0 or p[1] != 0:
                 points.append(p)
 
+
         points = np.array(points)
 
+
         start_time = time.time()
+
+        #get likelihood for each point
         for i, p in enumerate(ParticleCloud(self.particle_cloud)):
             p_frame_points = p.transform_scan(points)
 
+
             p.w = self.get_likelihood(p_frame_points, i)
 
-        print time.time() - start_time
+
 
         self.normalize_particles()
 
         self.publish_top_particle_laser(points)
 
     def publish_top_particle_laser(self, points):
+        """Publishes the laser scan from the top particle, for debug"""
+        
         top = ParticleCloud(self.particle_cloud)[0]
         viz_points = []
 
@@ -600,8 +594,8 @@ class ParticleFilter:
             n: the number of samples
         """
         values = np.array(range(len(choices)))
-        probs = np.array(probabilities)
-        bins = np.add.accumulate(probabilities)
+        probs = np.absolute(probabilities)
+        bins = np.add.accumulate(probs)
         inds = values[np.digitize(random_sample(n), bins)]
         samples = []
         for i in inds:
@@ -652,7 +646,7 @@ class ParticleFilter:
         """ Make sure the particle weights define a valid distribution
             (i.e. sum to 1.0)
         """
-        weight_sum = np.sum(self.particle_cloud[:, 0])  # grab the weights
+        weight_sum = np.sum(self.particle_cloud[:, 0])  # sum the weights
 
         # normalize
         normalized_weight_column = self.particle_cloud[:, 0] / weight_sum

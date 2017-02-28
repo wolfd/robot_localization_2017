@@ -203,10 +203,10 @@ class ParticleFilter:
 
         # spreads for init
         self.xy_spread = 0.25
-        self.theta_spread = .02 * math.pi
+        self.theta_spread = 0.5 * math.pi
         # odom update error
-        self.xy_odom_spread = .005
-        self.theta_odom_spread = .005 * math.pi
+        self.xy_odom_spread = .2
+        self.theta_odom_spread = .1 * math.pi
         # resampling induced error
         self.resample_x_scale = .25
         self.resample_y_scale = .25
@@ -307,9 +307,9 @@ class ParticleFilter:
         if self.current_odom_xy_theta:
             old_odom_xy_theta = self.current_odom_xy_theta
             delta = np.array([
-                self.current_odom_xy_theta[0] - new_odom_xy_theta[0],
-                self.current_odom_xy_theta[1] - new_odom_xy_theta[1],
-                angle_diff(new_odom_xy_theta[2], self.current_odom_xy_theta[2])
+                new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
+                new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
+                new_odom_xy_theta[2] - self.current_odom_xy_theta[2]
             ])
 
             self.current_odom_xy_theta = new_odom_xy_theta
@@ -317,41 +317,45 @@ class ParticleFilter:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
 
-        # random_delta_error based on odomspread constants and delta
+        # set up rotate, translate, rotate step for each particle
+        base_rotate_angle = math.atan2(delta[1], delta[0])
+        r1 = base_rotate_angle - self.current_odom_xy_theta[2]
+        r2 = delta[2] - r1
+        distance = math.sqrt(delta[0] ** 2.0 + delta[1] ** 2.0)
+
+        # step 1: rotate
+        # with some random rotations
         # simulates encoder error
+        self.particle_cloud[:, 3] += np.random.normal(
+            loc=0.0,
+            scale=self.theta_odom_spread,
+            size=self.n_particles
+        ) + r1
 
-        #make sure thetascale is not 0 even if theta has not changed
-        if delta[2] == 0:
-            delta[2] = .00005
-
-        scale = np.array([
-            abs(delta[0] * self.xy_odom_spread),
-            abs(delta[1] * self.xy_odom_spread),
-            abs(delta[2] * self.theta_odom_spread)
-        ]) 
-
-        
-        random_delta_error = np.random.normal(
-            loc=[0, 0, 0],
-            scale=scale,
-            size=(self.n_particles, 3)
+        # step 2: translate
+        # create random distribution of distances around odom's reality
+        distances = np.random.normal(
+            loc=distance,
+            scale=self.xy_odom_spread,
+            size=self.n_particles
         )
 
-        # add zero to the weights
-        # generate column of zeros
-        zero_weights = np.zeros((self.n_particles, 1))
-
-        # add delta to every element of random deltaerror
-        random_delta = np.add(random_delta_error, delta)
-
-        # concat weights with generated points
-        random_delta = np.concatenate(
-            (zero_weights, random_delta),
-            axis=1
+        # translate x
+        self.particle_cloud[:, 1] += (
+            np.cos(self.particle_cloud[:, 3]) * distances
+        )
+        # translate y
+        self.particle_cloud[:, 2] += (
+            np.sin(self.particle_cloud[:, 3]) * distances
         )
 
-        # add randomized delta to particle cloud
-        self.particle_cloud = np.add(random_delta, self.particle_cloud)
+        # step 3: rotate
+        # last rotation
+        self.particle_cloud[:, 3] += np.random.normal(
+            loc=0.0,
+            scale=self.theta_odom_spread,
+            size=self.n_particles
+        ) + r2
 
         # normalize angles
         self.particle_cloud[:, 3] = angle_normalize(self.particle_cloud[:, 3])
@@ -400,7 +404,6 @@ class ParticleFilter:
         probable_particles[:, 0] = initial_weights
 
         self.particle_cloud = probable_particles
-        
 
     def get_likelihood(self, p_frame_points):
         # generate array of distances
@@ -414,9 +417,8 @@ class ParticleFilter:
 
         distances = np.array(distances)
 
-        # if any of the points are off the map
-        #if np.isnan(distances).any():
-            #return 0.0  # eliminate this
+        if np.isnan(distances).any():
+            return 0.0
 
         sigma = 0.1  # how noisy the measurements are
         likes = np.exp(-distances * distances / (2.0 * sigma * sigma))
@@ -446,6 +448,7 @@ class ParticleFilter:
         print time.time() - start_time
 
         self.normalize_particles()
+        print self.particle_cloud[::10, 0]
 
     @staticmethod
     def draw_random_sample(choices, probabilities, n):
@@ -510,8 +513,8 @@ class ParticleFilter:
             (i.e. sum to 1.0)
         """
         weight_sum = np.sum(self.particle_cloud[:, 0])  # grab the weights
-
-        normalized_weight_column = self.particle_cloud[:, 0] / weight_sum #normalize
+        print weight_sum
+        normalized_weight_column = self.particle_cloud[:, 0] / weight_sum
 
         # reshape it so it's actually a column
         normalized_weight_column = normalized_weight_column.reshape(
